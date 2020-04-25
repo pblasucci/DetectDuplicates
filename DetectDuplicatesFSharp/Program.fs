@@ -9,35 +9,24 @@ let [<Literal>] Fail = 1
 [<EntryPoint>]
 let main args =
   try
-    let folder =
-      args
-      |> Array.tryHead
-      |> Option.defaultWith Directory.GetCurrentDirectory
+    let path = defaultArg (Array.tryHead args) (Directory.GetCurrentDirectory())
+    printfn "Looking for duplicates in %s\n " path
 
-    printfn "Looking for duplicates in %s... " folder
+    let duplicates = seq {
+      for file in Directory.EnumerateFiles(path, "*.csproj", SearchOption.AllDirectories) do
+        let packages = seq {
+          for line in File.ReadLines(file) do
+            let matched = Regex.Match(line, "<PackageReference\s+Include=\"([^\"]*)\"")
+            if matched.Success then matched.Groups.[1].Value
+        }
+        for (package, occurs) in packages |> Seq.groupBy id do
+          if 1 < Seq.length occurs then (file, package)
+    }
 
-    let duplicates =
-      Directory.EnumerateFiles(folder, "*.csproj", SearchOption.AllDirectories)
-      |> Seq.collect (fun file ->
-          file
-          |> File.ReadLines
-          |> Seq.choose (fun line ->
-              let matched = Regex.Match(line, "Include=\"([^\"]*)\"")
-              if matched.Success then Some matched.Groups.[1].Value else None
-          )
-          |> Seq.groupBy id
-          |> Seq.choose (fun (package, occurs) ->
-              if 1 < Seq.length occurs then
-                Some {| File = file; Package = package |}
-              else None
-          )
-      )
-      |> Seq.toList
+    for (file, package) in duplicates do
+        eprintfn "Duplicate %s found in %s" package file
 
-    for dup in duplicates do
-        eprintfn "Duplicate %s found in %s" dup.Package dup.File
-
-    printfn "Duplicate detection complete!"
+    printfn "\nDuplicate detection complete!"
     if 0 < Seq.length duplicates then Fail else Okay
   with
   | x -> eprintfn "ERROR! %A" x; Fail
